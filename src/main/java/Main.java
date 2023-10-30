@@ -20,16 +20,10 @@ public class Main {
 
         String string = versionRequest.toString();
 
-        ByteArrayOutputStream outputBytes = new ByteArrayOutputStream();
-
-        PrintWriter writer = new PrintWriter(outputBytes);
-        versionRequest.write(writer);
-        writer.flush();
-        short size = (short) (2 + outputBytes.size());
+        short size = (short) (2 + string.length());
 
         output.write(ByteBuffer.allocate(2).putShort(size).array());
-        output.write(outputBytes.toByteArray());
-
+        output.write(string.getBytes());
 
         output.flush();
 
