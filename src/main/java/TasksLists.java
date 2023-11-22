@@ -1,11 +1,21 @@
 import ModernDocking.Dockable;
 import ModernDocking.Docking;
+import org.json.JSONObject;
 
 import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.DataOutputStream;
+import java.io.IOException;
 
 public class TasksLists extends JPanel implements Dockable {
-    public TasksLists() {
+
+    private final JTable table;
+    private final DefaultTableModel tableModel;
+
+    public TasksLists(DataOutputStream output) {
         super(new GridBagLayout());
 
         Docking.registerDockable(this);
@@ -16,8 +26,38 @@ public class TasksLists extends JPanel implements Dockable {
 
         JTree tree = new JTree();
 
-        JTable table = new JTable();
+        tableModel = new DefaultTableModel(new Object[]{"ID", "Name"}, 0);
+        table = new JTable(tableModel);
 
+        JPopupMenu contextMenu = new JPopupMenu();
+        JMenuItem start = new JMenuItem("Start");
+        start.addActionListener(e -> {
+            int selectedRow = table.getSelectedRow();
+
+            if (selectedRow == -1) {
+                return;
+            }
+
+            JSONObject startTask = new JSONObject();
+            startTask.put("command", 3);
+            startTask.put("id", tableModel.getValueAt(table.convertRowIndexToModel(selectedRow), 0));
+
+            try {
+                MainFrame.sendJSON(output, startTask);
+            } catch (IOException ex) {
+                throw new RuntimeException(ex);
+            }
+        });
+        contextMenu.add(start);
+
+        table.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    contextMenu.show(table, e.getX(), e.getY());
+                }
+            }
+        });
         JSplitPane split = new JSplitPane();
         split.setLeftComponent(new JScrollPane(tree));
         split.setRightComponent(new JScrollPane(table));
@@ -45,5 +85,9 @@ public class TasksLists extends JPanel implements Dockable {
     @Override
     public boolean isWrappableInScrollpane() {
         return false;
+    }
+
+    public void addTask(int id, String name) {
+        tableModel.addRow(new Object[] { id, name });
     }
 }

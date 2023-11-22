@@ -64,6 +64,8 @@ public class Main {
                         System.out.println("Version: " + obj.getString("version"));
                         break;
                     case 2: // add task
+                        // this response verifies that the task was added
+                        break;
                     case 3: // start task
                         break;
                     case 4: // get task response

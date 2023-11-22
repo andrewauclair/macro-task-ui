@@ -4,22 +4,73 @@ import com.formdev.flatlaf.FlatDarkLaf;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import docking.ui.DockingUI;
+import org.json.JSONObject;
 
 import javax.swing.*;
 import javax.swing.plaf.IconUIResource;
 import java.awt.*;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.File;
+import java.io.IOException;
+import java.net.Socket;
+import java.nio.ByteBuffer;
+import java.time.OffsetDateTime;
+import java.util.Arrays;
 
 public class MainFrame extends JFrame {
-    private final File layoutFile = new File("layout.xml");
-    public MainFrame() {
+    public static void sendJSON(DataOutputStream output, JSONObject object) throws IOException {
+        String string = object.toString();
+
+        short size = (short) (2 + string.length());
+
+        output.write(ByteBuffer.allocate(2).putShort(size).array());
+        output.write(string.getBytes());
+
+        output.flush();
+    }
+
+    public MainFrame() throws IOException {
+        setLayout(new GridBagLayout());
+
+        final Socket socket = new Socket("127.0.0.1", 5005);
+
+        DataOutputStream output = new DataOutputStream(socket.getOutputStream());
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.weightx = 1;
+        gbc.weighty = 1;
+        gbc.fill = GridBagConstraints.BOTH;
+
         RootDockingPanel root = new RootDockingPanel();
-        add(root);
-setSize(400, 400);
-Docking.initialize(this);
+        add(root, gbc);
+
+        JPanel statusBar = new JPanel(new GridBagLayout());
+        JLabel activeTask = new JLabel("No active task");
+
+        gbc.weightx = 0;
+
+        statusBar.add(activeTask, gbc);
+        gbc.weightx = 1;
+        gbc.gridx=1;
+        statusBar.add(new JLabel(), gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy++;
+        gbc.weightx = 1;
+        gbc.weighty = 0;
+
+        add(statusBar, gbc);
+
+        setSize(400, 400);
+        Docking.initialize(this);
+
         DockingUI.initialize();
         Docking.registerDockingPanel(root, this);
-        TasksLists tasks = new TasksLists();
+
+        TasksLists tasks = new TasksLists(output);
 
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
 
@@ -29,19 +80,29 @@ Docking.initialize(this);
 
 
         JMenuBar menuBar = new JMenuBar();
-
         setJMenuBar(menuBar);
 
         JMenu task = new JMenu("Task");
         JMenuItem add = new JMenuItem("Add");
         add.addActionListener(e -> {
+            String name = JOptionPane.showInputDialog("Add new task");
 
+            JSONObject addTask = new JSONObject();
+            addTask.put("command", 2);
+            addTask.put("name", name);
+
+            try {
+                sendJSON(output, addTask);
+            } catch (IOException ex) {
+                throw new RuntimeException(ex);
+            }
         });
         task.add(add);
 
         menuBar.add(task);
 
 // now that the main frame is set up with the defaults, we can restore the layout
+        File layoutFile = new File("layout.xml");
         AppState.setPersistFile(layoutFile);
 
         try {
@@ -52,11 +113,73 @@ Docking.initialize(this);
         }
 
         AppState.setAutoPersist(true);
+
+
+        Thread listen = new Thread(() -> {
+            try (DataInputStream in = new DataInputStream(socket.getInputStream())) {
+                int packetLength;
+                while ((packetLength = in.readShort()) != -1) {
+                    int expectedBytes = packetLength - 2;
+
+                    byte[] bytes = new byte[expectedBytes];
+
+                    int totalRead = 0;
+
+                    while (totalRead < expectedBytes) {
+                        int read = in.read(bytes, totalRead, bytes.length - totalRead);
+                        if (read == -1) {
+                            totalRead = -1;
+                            break;
+                        }
+                        totalRead += read;
+                    }
+
+                    if (totalRead == -1) {
+                        break;
+                    }
+
+                    String source = new String(Arrays.copyOfRange(bytes, 0, bytes.length));
+                    JSONObject obj = new JSONObject(source);
+
+                    switch (obj.getInt("command")) {
+                        case 1: // version request response
+                            System.out.println("Version: " + obj.getString("version"));
+                            break;
+                        case 2: // add task
+                            // this response verifies that the task was added
+                            tasks.addTask(obj.getInt("id"), obj.getString("name"));
+                            break;
+                        case 3: // start task
+                            activeTask.setText(obj.getInt("id") + " - " + obj.getString("name"));
+                            repaint();
+                            break;
+                        case 4: // get task response
+                            OffsetDateTime addTime = OffsetDateTime.parse(obj.getString("add-time"));
+                            System.out.printf("Task %d %s %s%n", obj.getInt("id"), addTime, obj.getString("name"));
+
+                            if (obj.has("start-time")) {
+                                OffsetDateTime startTime = OffsetDateTime.parse(obj.getString("start-time"));
+
+                                System.out.println("start time: " + startTime);
+                            }
+                            break;
+                    }
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        listen.start();
     }
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             configureLookAndFeel();
-            new MainFrame().setVisible(true);
+            try {
+                new MainFrame().setVisible(true);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         });
     }
 
